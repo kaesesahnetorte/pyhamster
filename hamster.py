@@ -1,152 +1,237 @@
 
-"""
-provide full python code for the following app:
-
-It is a top down tilemap simulator where a hamster can move around.
-In the code, the tiles are encoded as a 2d array where each tile type has a different code:
-The tile types are:
-1. obstacle tile (encoded as X)
-2. empty tile with any number of food pieces on it. (encoded as integer number equal to the number of food pieces.)
-In the code there is a section for the user to implement code for the hamster behavior.
-The following functions are implemented to be used by the user:
-1. isFree() checks if the tile in front of the hamster is not an obstacle tile
-2. forward() makes the hamster go forward one tile. If there is an obstacle there, the simulation ends.
-3. turnLeft() makes the hamster turn left relative to its previous facing direction. It stays on the same tile.
-4. turnRight() analogous to turnLeft
-5. countFood() returns the integer amount of food pieces available on the field the hamster is standing on.
-4. takeFood() takes one piece of food from the tile the hamster is standing on if available.
-5. putFood() puts one piece of food on the tile the hamster is standing on.
-
-The GUI has the following input options:
-1. a "play / pause" button for the simulation time
-2. a "single step" button to advance the simulation by just one time frame.
-3. a speed slider to adjust the speed of the simulation on playback.
-4. a reset button to reset the simulation to the original state.
-
-The original state of the simulation can be set via the map array.
-"""
-
-
-
+from copy import copy, deepcopy
 import math
-import random
+from time import sleep, time
+
+import os, sys
 import tkinter as tk
 from PIL import Image, ImageTk
-import os
 
 
 # Constants for tile types
-
 EMPTY = 0
 X = 'X'
 OBSTACLE = X
 
-# Directions: 0 = Up, 1 = Right, 2 = Down, 3 = Left
-DIRECTIONS = [(0, -1), (1, 0), (0, 1), (-1, 0)]
 
+def game_over(text: str):
+    print("Game Over - ", text)
+    sys.exit()
+    return
 
 class Hamster:
-    def __init__(self, x, y, tilemap):
+
+    # dir_vecs: 0 = Up, 1 = Right, 2 = Down, 3 = Left
+    dir_vecs = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+
+    def __init__(self, x, y, mouth_food = 0, tilemap = None, reset_callback = lambda: None):
+        self.x: int = x
+        self.y: int = y
+        self.mouth_food: int = mouth_food
+
+        self.reset_callback: callable = reset_callback  # Callback for reset
+        self.map: any = tilemap
+
+        self.direction: int = 2  # Start facing Up
+        return
+
+    def bindSim(self, reset_callback, tilemap):
+        self.reset_callback = reset_callback
         self.map = tilemap
-        self.x = x
-        self.y = y
-        self.direction = 2  # Start facing Up
+        return
 
     def isFree(self):
-        dx, dy = DIRECTIONS[self.direction]
+        dx, dy = self.dir_vecs[self.direction]
         next_x, next_y = self.x + dx, self.y + dy
         return 0 <= next_x < len(self.map[0]) and 0 <= next_y < len(self.map) and self.map[next_y][next_x] != OBSTACLE
+    
+    def countMouthFood(self):
+        if not isinstance(self.map[self.y][self.x], int):
+            print("countMouthFood(): Something went wrong! Tile value is not an integer.")
+            return 0
+        return self.map[self.y][self.x]
+
+    def countFloorFood(self):
+        if not isinstance(self.map[self.y][self.x], int):
+            print("countFloorFood(): Something went wrong! Tile value is not an integer.")
+            return 0
+        return self.map[self.y][self.x]
 
     def forward(self):
         if self.isFree():
-            dx, dy = DIRECTIONS[self.direction]
+            dx, dy = self.dir_vecs[self.direction]
             self.x += dx
             self.y += dy
         else:
-            print("Obstacle encountered! Simulation ends.")
+            game_over("You crashed into an obstacle! Use isFree() to avoid this.")
+        self.sim_step()
+        return
 
     def turnLeft(self):
         self.direction = (self.direction - 1) % 4
+        self.sim_step()
+        return
 
     def turnRight(self):
         self.direction = (self.direction + 1) % 4
+        self.sim_step()
+        return
 
-    def countFood(self):
-        if isinstance(self.map[self.y][self.x], int):
-            return self.map[self.y][self.x]
-        else:
-            return 0
+    def takeFood(self, num: int = 1):
+        if num < 0:
+            game_over("You tried to take a negative amount of food! Only positive values allowed.")
+        if self.countFloorFood() < num:
+            game_over("You tried to take more food than available! Use countFloorFood() to void this.")
+        self.mouth_food += num
+        self.map[self.y][self.x] -= num
+        self.sim_step()
+        return
 
-    def takeFood(self):
-        if self.countFood() > 0:
-            self.map[self.y][self.x] -= 1
+    def putFood(self, num: int = 1):
+        if num < 0:
+            game_over("You tried to put down a negative amount of food! Only positive values allowed.")
+        if self.mouth_food < num:
+            game_over("You tried to put food that you do not have in your mouth! Use countMouthFood() to avoid this.")
+        if not isinstance(self.map[self.y][self.x], int):
+            print("putFood(): Something went wrong! Tile value is not an integer.")
+            return
+        self.mouth_food -= num
+        self.map[self.y][self.x] += num
+        self.sim_step()
+        return
 
-    def putFood(self):
-        if isinstance(self.map[self.y][self.x], int):
-            self.map[self.y][self.x] += 1
+    def sim_step(self):
+        self.reset_callback()
+        return
+
+
+class SimulationResetException(Exception):
+    """Custom exception to handle simulation reset."""
+    pass
 
 
 class TilemapSimulator:
+
     def __init__(self, master, tilemap, hamster, cb_behavior):
-        self.tile_size = 60
+        self.original_tilemap = deepcopy(tilemap)
+        self.map = deepcopy(self.original_tilemap)
+        self.original_hamster = deepcopy(hamster)
+
+        self.cb_behavior = cb_behavior
         self.master = master
-        self.original_tilemap = tilemap
-        self.map = self.original_tilemap
+
+        self.tile_size = 60
+
+        self.do_term = False
+        self.do_reset = False  # Flag for reset
+        self.is_running = False
         self.map_w = len(self.map[0])
         self.map_h = len(self.map)
-        self.hamster = hamster  # Starting position
-        self.running = False
-        self.speed = 100  # Default speed in milliseconds
-        self.cb_behavior = cb_behavior
+
+        self.master.protocol("WM_DELETE_WINDOW", self.cb_close)
+
+        # In the TilemapSimulator class __init__ method, modify the hamster image loading line:
         hamster_image_path = os.path.join(os.path.dirname(__file__), "hamster.png")
         self.hamster_image = Image.open(hamster_image_path).resize((int(self.tile_size / 2), int(self.tile_size / 2)), Image.LANCZOS)
         self.hamster_photo = ImageTk.PhotoImage(self.hamster_image)
 
-        self.cnv_brd = self.tile_size / 2 # canvas border
-        cnv_w = self.cnv_brd *2 + self.tile_size * self.map_w
-        cnv_h = self.cnv_brd *2 + self.tile_size * self.map_h
+        self.cnv_brd = self.tile_size / 2  # canvas border
+        cnv_w = self.cnv_brd * 2 + self.tile_size * self.map_w
+        cnv_h = self.cnv_brd * 2 + self.tile_size * self.map_h
         self.canvas = tk.Canvas(master, width=cnv_w, height=cnv_h)
         self.canvas.pack()
 
-        self.play_pause_button = tk.Button(master, text="Play / Pause", width=10, command=self.toggle_simulation)
-        self.play_pause_button.pack()
+        self.button_play = tk.Button(master, width=10, command=self.cb_button_play)
+        self.button_play.pack()
+        # button text is set in callback
+        for i in range(2):
+            self.cb_button_play()
 
-        self.single_step_button = tk.Button(master, text="Single Step", width=10, command=self.single_step)
-        self.single_step_button.pack()
+        self.button_step = tk.Button(master, text="Step", width=10, command=self.cb_button_step)
+        self.button_step.pack()
+        self.button_reset = tk.Button(master, text="Reset", width=10, command=self.cb_button_reset)
+        self.button_reset.pack()
 
-        self.reset_button = tk.Button(master, text="Reset", width=10, command=self.reset)
-        self.reset_button.pack()
+        self.slider_speed = tk.Scale(master, from_=0, to=100, label="Speed", orient=tk.HORIZONTAL, length=300)
+        self.slider_speed.set(50)
+        self.slider_speed.pack()
 
-        self.speed_slider = tk.Scale(master, from_=0, to=100, label="Speed (Hz)", orient=tk.HORIZONTAL, length=300)
-        self.speed_slider.set(self.speed)
-        self.speed_slider.pack()
+        self.init_sim()
+        return
+    
+    def init_sim(self):
+        self.map = deepcopy(self.original_tilemap)
 
-        self.reset()
-        # self.update_canvas()
-        rate: int = int(1000 / (1 + math.pow(2, (self.speed -50) / 10)))
-        self.master.after(rate, self.update)
+        self.hamster = deepcopy(self.original_hamster)
+        self.hamster.bindSim(self.cb_sim_step, self.map)
 
-    def toggle_simulation(self):
-        self.running = not self.running
+        self.scheduled_steps = 0
+        self.is_running = False
+        self.update_canvas()
+        return
 
-    def single_step(self):
-        self.update_hamster()
+    def sim_main(self):
+        while not self.do_term:
+            self.init_sim()
 
-    def reset(self):
-        self.map = self.original_tilemap  # Reset tilemap
-        self.hamster = Hamster(1, 1, self.map)  # Reset hamster position
+            try:
+                self.cb_sim_step()
+                self.cb_behavior(self.hamster)
+            except SimulationResetException:
+                self.do_reset = False
+        return
+
+    def cb_button_play(self):
+        self.is_running = not self.is_running
+        button_text: str = "Play" if not self.is_running else "Pause"
+        self.button_play.config(text=button_text)
+        return
+    
+    def cb_button_step(self):
+        # not incrementing, but setting to 1
+        self.scheduled_steps = 1
+        return
+
+    def cb_button_reset(self):
+        self.do_reset = True  # Set the reset flag
+        self.is_running = False
+        self.update_canvas()  # Update the canvas to reflect the reset state
+        return
+    
+    def cb_close(self):
+        # terminate cleanly
+        self.do_term = True
+        self.master.destroy()
+        return
+
+    def cb_sim_step(self):
         self.update_canvas()
 
-    def update(self):
-        if self.running:
-            self.update_hamster()
-        rate: int = int(1000 / (1 + math.pow(2, (self.speed_slider.get() -50 ) / 10)))
-        # rate = int(1000 / self.speed_slider.get())
-        self.master.after(rate, self.update)
+        delay_s: float = 1.0 / (1 + math.pow(2, (self.slider_speed.get() -50 ) / 10))
+            
+        # active wait for simulation time step delay
+        # while updating GUI
+        ts_delay_end = time() + delay_s # timestamp
+        while time() < ts_delay_end:
+            sleep(0.001) # 1ms
+            self.master.update()
 
-    def update_hamster(self):
-        self.cb_behavior(self.hamster)
-        self.update_canvas()
+        # active wait for go-forward
+        # while updating GUI
+        while True:
+            self.master.update()
+
+            if self.do_reset or self.do_term:
+                raise SimulationResetException()
+                # Return the reset flag status
+        
+            if self.scheduled_steps > 0:
+                self.scheduled_steps -= 1
+                break
+
+            if self.is_running:
+                break
+        return
 
     def update_canvas(self):
         self.canvas.delete("all")
@@ -174,8 +259,8 @@ class TilemapSimulator:
         self.current_hamster_image = ImageTk.PhotoImage(self.hamster_image.rotate(angle, expand=True))
         hamster_x = self.cnv_brd + self.hamster.x * self.tile_size + self.tile_size / 2
         hamster_y = self.cnv_brd + self.hamster.y * self.tile_size + self.tile_size / 2
-        # self.canvas.create_oval(hamster_x - 15, hamster_y - 15, hamster_x + 15, hamster_y + 15, fill="orange")
         self.canvas.create_image(hamster_x, hamster_y, image=self.current_hamster_image)
+        return
 
 
 def create_map():
@@ -188,39 +273,49 @@ def create_map():
         [X, 0, 0, 0, 0, 0, 0, X],
         [X, 0, 0, 0, 0, 0, 0, X],
         [X, 0, 0, 0, 0, 0, 0, X],
-        [X, X, X, X, X, X, X, X],
-    ]
+        [X, X, X, X, X, X, X, X]
+        ]
 
 
-def custom(hamster):
-        # Example behavior: Move forward if free, else turn right
+def hamster_behavior(hamster):
+    # TODO: WRITE YOUR CODE HERE!
+    # To control the hamster, use functions "isFree(), forward(), turnRight(), turnLeft(), countMouthFood(), countFloorFood(), takeFood(), putFood()"
+
     hamster.turnLeft()
-    while not hamster.isFree():
-        hamster.turnRight()
     hamster.forward()
-    if hamster.countFood() > 0:
-        print("Mhhm")
-        hamster.takeFood()
+    hamster.forward()
+    hamster.forward()
+
+
+    """
+    # Example behavior: Move forward if free, else turn right
+    while True:
+        hamster.turnLeft()
+        while not hamster.isFree():
+            hamster.turnRight()
+        hamster.forward()
+    
+        if hamster.countFloorFood() > 0:
+            hamster.takeFood()
+    """
+
+    return
+
+
+def main():
+    root = tk.Tk()
+    root.title("Hamster Tilemap Simulator")
+    
+    map = create_map()
+    hamster = Hamster(1, 1)
+    simulator = TilemapSimulator(root, map, hamster, hamster_behavior)
+    simulator.sim_main()
     return
 
 
 # Main application
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("Hamster Tilemap Simulator")
-    
-    map = create_map()
-    hamster = Hamster(1, 1, map)
-    simulator = TilemapSimulator(root, map, hamster, custom)
-
-    # custom(hamster)
-    root.mainloop()
+    main()
 
 
-
-# Todos
-# 1. better obstacle texture
-# 2. hamster with visible direction
-# 3. greater map
-# 4. delete hamster code
-
+# TODO: Write your code into the function "hamster_behavior()" above!
