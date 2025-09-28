@@ -338,13 +338,13 @@ class TilemapSimulator:
 def create_map():
     map = np.array([
         [X, X, X, X, X, X, X, X],
-        [X, 0,90, 0, 0, 0, 0, X],
-        [X, 0, 0, 1, 0, X, 0, X],
-        [X, 0, 0, 0, X, X, 0, X],
+        [X, 0, X, 0, 0, 0, 0, X],
+        [X, 0, 0, 0, 4, X, 0, X],
+        [X, 0, X, 0, X, X, 0, X],
         [X, X, X, 0, 0, 0, 0, X],
-        [X, 0, 0, 0, 0, 0, 0, X],
-        [X, 0, 0, 0, 0, 0, 0, X],
-        [X, 0, 0, 0, 0, 0, 0, X],
+        [X, 0, 7, 0, 0, 3, 0, X],
+        [X, 0, 0, X, X, X, 0, X],
+        [X, 0, 0, X,99, 0, 0, X],
         [X, X, X, X, X, X, X, X]
         ], dtype=int)
     map = np.transpose(map)
